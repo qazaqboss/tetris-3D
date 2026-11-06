@@ -324,6 +324,7 @@ const side = `
     <button type="button" data-act="theme">Light</button>
     <button type="button" data-act="tint">Colour</button>
     <button type="button" data-act="sound">Sound on</button>
+    <button type="button" data-act="music">Music on</button>
   </div>
   <dl class="tw-keys">
     <dt>← →</dt><dd>move</dd>
@@ -333,6 +334,7 @@ const side = `
     <dt>Space</dt><dd>hard drop</dd>
     <dt>C / Shift</dt><dd>hold</dd>
     <dt>P / Esc</dt><dd>pause</dd>
+    <dt>M</dt><dd>music on / off</dd>
   </dl>
 </aside>`;
 
@@ -402,9 +404,26 @@ body{margin:0;background:var(--anatomy-page);color:var(--anatomy-text);font:14px
 .tint[data-theme="light"] .cube .iso-solid[data-lit]>.iso-shade{fill:hsl(var(--h) 60% 62%)}
 `;
 
+// Link preview. SITE is where the page is published (GitHub Pages by default); change it if you host elsewhere.
+const SITE = process.env.SITE_URL || "https://qazaqboss.github.io/tetris-3D/";
+const DESC = "3D falling blocks, drawn as a working machine: a 10×20 well on a bench, with hold and next trays, a lines dial and its own soundtrack.";
+const META = [
+  `<meta name="description" content="${DESC}">`,
+  `<meta property="og:type" content="website">`,
+  `<meta property="og:title" content="Tetra Well — 3D falling blocks">`,
+  `<meta property="og:description" content="${DESC}">`,
+  `<meta property="og:url" content="${SITE}">`,
+  `<meta property="og:image" content="${SITE}docs/banner.png">`,
+  `<meta property="og:image:width" content="1200">`,
+  `<meta property="og:image:height" content="630">`,
+  `<meta name="twitter:card" content="summary_large_image">`,
+  `<meta name="twitter:title" content="Tetra Well — 3D falling blocks">`,
+  `<meta name="twitter:description" content="${DESC}">`,
+  `<meta name="twitter:image" content="${SITE}docs/banner.png">`,
+].join("");
 const escapeScript = (text) => text.replace(/<\/(script)/gi, "<\\/$1");
 const script = `${kitSource}\nconst CFG = ${JSON.stringify(CFG)};\n${gameSource}`;
-const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Tetra Well — 3D falling blocks</title><style>${k.ISO_CSS}${PAGE_CSS}</style></head><body class="iso" data-theme="dark"><main class="tw-page"><div>${plate}${pad}</div>${side}</main><script type="module">${escapeScript(script)}</script></body></html>`;
+const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Tetra Well — 3D falling blocks</title>${META}<style>${k.ISO_CSS}${PAGE_CSS}</style></head><body class="iso" data-theme="dark"><main class="tw-page"><div>${plate}${pad}</div>${side}</main><script type="module">${escapeScript(script)}</script></body></html>`;
 
 writeFileSync(join(HERE, "index.html"), html);
 console.log(`wrote index.html (${(html.length / 1024).toFixed(0)} KB)`);

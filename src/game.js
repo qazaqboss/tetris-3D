@@ -299,6 +299,7 @@ function tick(now) {
   if (mode === "over" && restartTimer > 0) { restartTimer -= dt; if (restartTimer <= 0) reset("attract"); }
   animate(dt);
   render();
+  syncMusic();
   requestAnimationFrame(tick);
 }
 
@@ -429,6 +430,7 @@ function hideOverlay() { overlay.hidden = true; }
 
 function start() {
   ensureAudio();
+  song.step = 0;
   reset("play");
   hideOverlay();
   stage.focus({ preventScroll: true });
@@ -463,7 +465,7 @@ function release(action) {
 const KEYMAP = {
   ArrowLeft: "left", ArrowRight: "right", ArrowDown: "soft", ArrowUp: "rotate", x: "rotate", X: "rotate",
   z: "rotateLeft", Z: "rotateLeft", Control: "rotateLeft", " ": "drop", c: "hold", C: "hold", Shift: "hold",
-  p: "pause", P: "pause", Escape: "pause",
+  p: "pause", P: "pause", Escape: "pause", m: "music", M: "music",
   a: "left", A: "left", d: "right", D: "right", s: "soft", S: "soft", w: "rotate", W: "rotate",
 };
 addEventListener("keydown", (event) => {
@@ -473,6 +475,7 @@ addEventListener("keydown", (event) => {
   if (!action) return;
   event.preventDefault();
   if (event.repeat) return;
+  if (action === "music") { ensureAudio(); applyMusic(!musicOn); return; }
   press(action);
 });
 addEventListener("keyup", (event) => { const action = KEYMAP[event.key]; if (action) release(action); });
@@ -532,6 +535,7 @@ document.querySelector('[data-act="pause"]').addEventListener("click", () => { t
 document.querySelector('[data-act="theme"]').addEventListener("click", () => applyTheme(body.dataset.theme === "dark" ? "light" : "dark"));
 document.querySelector('[data-act="tint"]').addEventListener("click", () => applyTint(!body.classList.contains("tint")));
 document.querySelector('[data-act="sound"]').addEventListener("click", () => { ensureAudio(); applySound(!soundOn); });
+document.querySelector('[data-act="music"]').addEventListener("click", () => { ensureAudio(); applyMusic(!musicOn); });
 for (const b of document.querySelectorAll("[data-act]")) b.addEventListener("click", () => stage.focus({ preventScroll: true }));
 applyTheme(store.get("theme", matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark"));
 applyTint(store.get("tint", false));
@@ -565,6 +569,113 @@ function sound(name) {
     osc.connect(amp).connect(audio.destination);
     osc.start(now + delay);
     osc.stop(now + delay + len + 0.02);
+  }
+}
+
+// ---------- music: an original 8-bar loop, synthesized live (no audio files) ----------
+// A minor, i–VI–III–VII (Am F C G). Melody, bass, arpeggio and soft drums on a 16th-note grid,
+// scheduled slightly ahead on the audio clock. Tempo rises a little with the level.
+let musicOn = store.get("music", true);
+function applyMusic(on) { musicOn = on; document.querySelector('[data-act="music"]').textContent = on ? "Music on" : "Music off"; store.set("music", on); }
+applyMusic(musicOn);
+const CHORDS = [
+  { root: 45, arp: [57, 60, 64] }, // Am
+  { root: 41, arp: [53, 57, 60] }, // F
+  { root: 48, arp: [55, 60, 64] }, // C
+  { root: 43, arp: [55, 59, 62] }, // G
+];
+const _ = null;
+// semitones above A4, one entry per eighth note
+const MELODY = [
+  [[7, _, 12, _, 10, 8, 7, _], [8, _, 5, 7, 8, _, 12, _], [10, _, 7, _, 3, 5, 7, _], [5, _, 2, _, -2, _, _, _]],
+  [[12, _, 15, 14, 12, _, 10, _], [8, 10, 12, _, 8, _, 5, _], [7, _, 10, 8, 7, 3, 7, _], [10, _, 7, _, 2, _, _, _]],
+];
+const song = { running: false, step: 0, next: 0, timer: 0, bus: null, noise: null };
+const hz = (midi) => 440 * Math.pow(2, (midi - 69) / 12);
+function musicBus() {
+  if (song.bus) return song.bus;
+  const filter = audio.createBiquadFilter();
+  filter.type = "lowpass"; filter.frequency.value = 3200; filter.Q.value = 0.3;
+  const gain = audio.createGain();
+  gain.gain.value = 0;
+  filter.connect(gain).connect(audio.destination);
+  const buffer = audio.createBuffer(1, audio.sampleRate * 0.3, audio.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+  song.noise = buffer;
+  song.bus = { input: filter, gain };
+  return song.bus;
+}
+function note(t, freq, len, peak, type, glide = 0) {
+  const osc = audio.createOscillator();
+  const amp = audio.createGain();
+  osc.type = type;
+  osc.frequency.setValueAtTime(freq, t);
+  if (glide) osc.frequency.exponentialRampToValueAtTime(glide, t + len);
+  amp.gain.setValueAtTime(0.0001, t);
+  amp.gain.exponentialRampToValueAtTime(peak, t + 0.008);
+  amp.gain.exponentialRampToValueAtTime(0.0001, t + len);
+  osc.connect(amp).connect(song.bus.input);
+  osc.start(t);
+  osc.stop(t + len + 0.03);
+}
+function hiss(t, len, peak, cutoff) {
+  const src = audio.createBufferSource();
+  src.buffer = song.noise;
+  const filter = audio.createBiquadFilter();
+  filter.type = "highpass"; filter.frequency.value = cutoff;
+  const amp = audio.createGain();
+  amp.gain.setValueAtTime(peak, t);
+  amp.gain.exponentialRampToValueAtTime(0.0001, t + len);
+  src.connect(filter).connect(amp).connect(song.bus.input);
+  src.start(t);
+  src.stop(t + len + 0.02);
+}
+function playStep(step, t, sixteenth) {
+  const s = step % 16;
+  const bar = Math.floor(step / 16) % 8;
+  const chord = CHORDS[bar % 4];
+  const section = bar < 4 ? 0 : 1;
+  if (s % 2 === 0) {
+    note(t, hz(chord.root + (s % 4 === 2 ? 12 : 0)), sixteenth * 1.8, 0.32, "triangle");
+    const line = MELODY[section][bar % 4];
+    const i = s / 2;
+    if (line[i] !== null) {
+      let length = 1;
+      while (i + length < line.length && line[i + length] === null) length++;
+      note(t, hz(69 + line[i]), sixteenth * 2 * length * 0.92, 0.075, "square");
+      note(t, hz(69 + line[i]) * 1.003, sixteenth * 2 * length * 0.92, 0.05, "triangle");
+    }
+  }
+  const arp = chord.arp[[0, 1, 2, 1][s % 4]] + 12;
+  note(t, hz(arp), sixteenth * 0.9, section ? 0.03 : 0.018, "square");
+  if (s === 0 || s === 8 || (section && s === 10)) note(t, 150, 0.16, 0.5, "sine", 45);
+  if (s === 4 || s === 12) hiss(t, 0.12, 0.09, 1800);
+  if (s % 2 === 1) hiss(t, 0.035, 0.035, 7000);
+}
+function scheduler() {
+  const bpm = Math.min(150, 108 + (level - 1) * 4);
+  const sixteenth = 60 / bpm / 4;
+  while (song.next < audio.currentTime + 0.15) {
+    playStep(song.step, song.next, sixteenth);
+    song.step = (song.step + 1) % 128;
+    song.next += sixteenth;
+  }
+}
+function syncMusic() {
+  const want = !!audio && musicOn && mode === "play" && !document.hidden;
+  if (want === song.running) return;
+  song.running = want;
+  if (want) {
+    const bus = musicBus();
+    bus.gain.gain.cancelScheduledValues(audio.currentTime);
+    bus.gain.gain.setTargetAtTime(0.42, audio.currentTime, 0.3);
+    song.next = audio.currentTime + 0.06;
+    scheduler();
+    song.timer = setInterval(scheduler, 25);
+  } else {
+    clearInterval(song.timer);
+    if (song.bus) song.bus.gain.gain.setTargetAtTime(0, audio.currentTime, 0.08);
   }
 }
 
